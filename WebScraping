@@ -1,0 +1,357 @@
+#====Part I Scraping the Summaries of the Posts====================================
+# 1. Process the current summary page of posts, 
+  #starting with the first page of results
+library(RCurl)
+library(XML)
+url = 'http://stackoverflow.com/questions/tagged/r'
+stackR = getURLContent(url)
+save(stackR, file = "stackoverflow_R.rda")
+HTML = htmlParse(stackR, asText = TRUE)
+class(HTML)
+
+# 2. For each post, extract information about: 
+  #who posted it,
+  #when it was posted,
+  #the title of the post
+  #the reputation level of the poster,
+  #the current number of views for the post,
+  #the current number of answers for the post,
+  #the vote "score" for the post,
+  #the URL for the page with the post, answers and comments,
+  #the id (a number) uniquely identifying the post. 
+
+#ONE PAGE SCRAPING
+#who posed it:
+users = "//div[@class = 'user-details']/a/text()"
+Users = getNodeSet(HTML, users)
+Users
+length(Users) #15 users in the first page
+
+#when it was posted:
+times = "//div[@class = 'user-action-time']/span/@title"
+Times = getNodeSet(HTML, times)
+Times
+length(Times) #15 
+
+#tags:
+tags = "//div[contains(@class,'tags')]"
+Tags = xpathSApply(HTML, tags, xmlValue, trim = TRUE)
+Tags = gsub(' ', ';', Tags[1:15])
+Tags
+length(Tags)
+
+#title of the post:
+titles = "//div[@class = 'summary']/h3/a/text()"
+Titles = getNodeSet(HTML, titles)
+Titles
+length(Titles) #15
+
+#reputation level of the poster:
+reputation = "//div[@class]/span[@class = 'reputation-score']/text()"
+Reputation = getNodeSet(HTML, reputation)
+Reputation
+length(Reputation) #15
+
+#current number of views for the post:
+views = "//div[@class = 'views ']/text()"
+Views = getNodeSet(HTML, views)
+Views
+length(Views) #15
+
+#current number of answers for the post:
+answers = "//div[@class]/strong/text()"
+Answers = getNodeSet(HTML, answers) 
+Answers
+length(Answers) #15
+
+#vote "score" for the post:
+votes = "//div[@class = 'votes']/span/strong/text()"
+Votes = getNodeSet(HTML, votes)
+Votes
+length(Votes) #15
+
+#URL for the page with post, answers, and comments:
+pages = "//div[@class = 'summary']/h3/a/@href"
+pages
+Pages = getNodeSet(HTML, pages)
+surl = sub('/questions.*', '', url)
+Pages = sub('^', surl, Pages)
+Pages
+length(Pages) #15
+
+#id (number) that uniquely identify the post:
+id = "//div[@class = 'question-summary']/@id"
+ID = getNodeSet(HTML, id)
+ID = gsub('[[:alpha:]]+[\\-]', '', ID)
+ID
+length(ID) #15
+
+
+#3. Obtain the URL for the "next" page listing posts.
+next_page = "//div[@class = 'pager fl']/a/@href"
+Next_Page = getNodeSet(HTML, next_page)
+Next_Page = sub("^", url, Next_Page[6])
+Next_Page
+
+#4. Repeat 1,2,3
+
+User = sapply(1, function(x) xpathApply(Users[[x]], users, xmlValue))
+Title = sapply(1, function(x) xpathApply(Titles[[x]], titles, xmlValue))
+Reputations = sapply(1, function(x) xpathSApply(Reputation[[x]], reputation, xmlValue))
+Reputations = sub('[[:space:][:alpha:]]', '', Reputations)
+Reputations
+View = sapply(1, function(x) xpathApply(Views[[x]], views, xmlValue))
+View = gsub('[[:alpha:][:space:]]', '', View)
+Answer = sapply(1, function(x) xpathApply(Answers[[x]], answers, xmlValue))
+Vote = sapply(1, function(x) xpathApply(Votes[[x]], votes, xmlValue))
+Page1 = cbind(ID, Times, Tags, Title, Pages, View, Vote, User, Answer, Reputations)
+rownames(Page1) = 1:length(Users)
+Page1 = data.frame(Page1)
+colnames(Page1) = c("ID", "Time", "Tags", "Title", "Page", "Views", "Votes", "User", "Number of Answers", "Reputations")
+Page1
+
+xpathApply(HTML, "//div[@class = 'user-details']/a/text()", xmlValue)
+
+#ONE PAGE WEBSCRAPING
+OneScrape = function(web){
+  Users = xpathApply(web, "//div[@class = 'user-details']/a/text()", xmlValue) 
+  Times = getNodeSet(web, "//div[@class = 'user-action-time']/span/@title")
+  Tags = xpathSApply(web, "//div[contains(@class,'tags')]", xmlValue, trim = TRUE)
+  Tags = gsub(' ', ';', Tags[1:15])
+  Titles = xpathSApply(web, "//div[@class = 'summary']/h3/a/text()", xmlValue)
+  Reputation = xpathSApply(web, "//div[@class]/span[@class = 'reputation-score']/text()", xmlValue)
+  Views = xpathSApply(web, "//div[@class = 'views ']/text()", xmlValue)
+  Views = gsub('[[:alpha:][:space:]]', '', Views)
+  Answers = xpathSApply(web, "//div[@class]/strong/text()", xmlValue)
+  Votes = xpathSApply(web, "//div[@class = 'votes']/span/strong/text()", xmlValue)
+  ID = getNodeSet(web, "//div[@class = 'question-summary']/@id")
+  ID = gsub('[[:alpha:]]+[\\-]', '', ID)
+  Pages = getNodeSet(web, "//div[@class = 'summary']/h3/a/@href")
+  Pages = sub('^', surl, Pages)
+  Page1 = cbind(ID, Times, Tags, Titles, Pages, Views, Votes, Users, Answers, Reputation)
+  rownames(Page1) = 1:length(Users)
+  Page1 = data.frame(Page1)
+  colnames(Page1) = c("ID", "Time", "Tags", "Title", "Page", "Views", "Votes", "User", "Number of Answers", "Reputations")
+  return(Page1)
+}
+
+OneScrape(HTML)
+
+#MULTIPLE PAGE WEBSCRAPING
+nullToNA = function(x) {
+  x[sapply(x, is.null)] <- NA
+  return(x)
+}
+
+WebScrape = function(pagelimit){
+  Next = gsub('/r/questions/tagged', '', Next_Page)
+  page = paste0('page=', pagelimit, sep = '')
+  HTML = gsub('page=[0-9]+', page, Next)
+  stackR = getURLContent(HTML)
+  web = htmlParse(stackR)
+  return(web)
+}
+
+HTMLPages = sapply(1:150, WebScrape)
+HTMLPages
+Scrape = function(web){
+  Users = getNodeSet(HTMLPages[[web]], "//div[@class = 'user-details']")
+  Users = sapply(1:length(Users), function(x) xpathApply(Users[[x]], ".//a/text()", xmlValue))
+  Users = unlist(nullToNA(Users))
+  Times = getNodeSet(HTMLPages[[web]], "//div[@class = 'user-action-time']/span/@title")
+  Times = unlist(Times)
+  Tags = xpathSApply(HTMLPages[[web]], "//div[contains(@class,'tags')]", xmlValue, trim = TRUE)
+  Tags = gsub(' ', ';', Tags[1:15])
+  Tags = unlist(Tags)
+  Titles = xpathSApply(HTMLPages[[web]], "//div[@class = 'summary']/h3/a/text()", xmlValue)
+  Titles = unlist(Titles)
+  Reputation = getNodeSet(HTMLPages[[web]], "//div[@class = '-flair']")
+  Reputation = sapply(1:length(Reputation), function(x) xpathApply(Reputation[[x]], ".//span[@class = 'reputation-score']/text()", xmlValue))
+  Reputation = unlist(nullToNA(Reputation))
+  Views = xpathSApply(HTMLPages[[web]], "//div[@class = 'views ']/text()", xmlValue)
+  Views = gsub('[[:alpha:][:space:]]', '', Views)
+  Views = unlist(Views)
+  Answers = xpathSApply(HTMLPages[[web]], "//div[@class]/strong/text()", xmlValue)
+  Answers = unlist(Answers)
+  Votes = xpathSApply(HTMLPages[[web]], "//div[@class = 'votes']/span/strong/text()", xmlValue)
+  Votes = unlist(Votes)
+  ID = getNodeSet(HTMLPages[[web]], "//div[@class = 'question-summary']/@id")
+  ID = gsub('[[:alpha:]]+[\\-]', '', ID)
+  ID = unlist(ID)
+  Pages = getNodeSet(HTMLPages[[web]], "//div[@class = 'summary']/h3/a/@href")
+  Pages = sub('^', surl, Pages)
+  Pages = unlist(Pages)
+  Page1 = cbind(ID, Times, Tags, Titles, Pages, Views, Votes, Users, Answers, Reputation)
+  rownames(Page1) = 1:15
+  Page1 = data.frame(Page1)
+  colnames(Page1) = c("ID", "Time", "Tags", "Title", "Page", "Views", "Votes", "User", "Number of Answers", "Reputations")
+  return(Page1)
+}
+
+StackOverFlow = lapply(1:length(HTMLPages), Scrape)
+class(StackOverFlow)
+StackOverFLOW = do.call(rbind, StackOverFlow)
+head(StackOverFLOW)
+
+#=====PART 3==============================================================
+#1. What is the distribution of the number of questions each person answered?
+library(plyr)
+class(StackOverFLOW)
+setwd('~/Desktop/STA 141 Fall 2015/STA 141 Assignment 6')
+load('rQAs.rda')
+View(rQAs)
+
+bytype = split(rQAs, rQAs$type)
+ans = count(bytype$answer[,2])
+byAnswers = count(ans[,2])
+byAnswers[,'x'] <- as.factor(byAnswers$x)
+
+plot(byAnswers[,1],byAnswers[,2], xlab = 'Number of Answers', ylab = 'Frequency of Number of Answers', 
+     main = 'Distribution of the Number of Questions Each Person Answered')
+?plot
+#2. What are the most common tags?
+names(rQAs)
+names(StackOverFLOW)
+tags = as.character(StackOverFLOW$Tags)
+TAGS = sapply(1: length(tags), function(x) as.list(strsplit(tags[[x]], ";")))
+TAGS = unlist(TAGS)
+TAGS = unique(TAGS)
+TAGS
+
+library(stringi)
+names(bytype) #answer, comment, question
+nrow(bytype$question) #10,004 rows
+
+tagCount = lapply(1:length(TAGS), function(x) {
+  tag = TAGS[x]
+  tag = gsub('^', ' ', tag)
+  tag = gsub('$', ' ', tag)
+  tag = stri_extract_first_regex(QS$text, tag)
+  count(tag)
+})
+
+head(tagCount)
+TAGCount = do.call(rbind, tagCount)
+TAGCounts= TAGCount[complete.cases(TAGCount),]
+MostTagged = TAGCounts[order(TAGCounts[,2], decreasing = TRUE),]
+MostTagged
+
+#3. How many questions are about ggplot?
+QS = bytype$question
+
+tagCount = lapply(1:length(TAGS), function(x) {
+  tag = TAGS[x]
+  tag = gsub('^', ' ', tag)
+  tag = gsub('$', ' ', tag)
+  tag = stri_extract_first_regex(QS$text, tag)
+  count(tag)
+})
+
+head(tagCount)
+TAGCount = do.call(rbind, tagCount)
+TAGCounts= TAGCount[complete.cases(TAGCount),]
+TAGCounts
+
+grep('ggplot', TAGCounts[,1], value=TRUE)
+subset(TAGCounts, x == ' ggplot2 ') #128
+
+#4. How many questions involve XML, HTML or Web Scraping?
+grep('xml', TAGCounts[,1], value=TRUE)
+subset(TAGCounts, x == ' xml ' | x == ' libxml2 ')
+
+grep('html', TAGCounts[,1], value=TRUE)
+subset(TAGCounts, x == ' html ')
+
+grep('web', TAGCounts[,1], value=TRUE)
+subset(TAGCounts, x == ' web-scraping ')
+
+#5. What are the names of the R functions referenced in the titles of the posts?
+names(rQAs)
+rTitles = rownames(rQAs)
+
+RTitles = sapply(1:nrow(rQAs), function(x){
+  t1 = rTitles[x]
+  tw = strsplit(t1, '/')
+  tw = unlist(tw)
+  tail(tw, 1)  
+})
+length(RTitles)
+TAGS
+
+base = ls('package:base')
+class(base)
+
+TAG = TAGS[which(TAGS %in% base)]
+TAG
+
+tagTitle = lapply(1:length(TAG), function(x){
+  title = strsplit(RTitles, '-')
+  title = unlist(title)
+  w = paste0('(^',TAG[x], ')$|^',TAG[x],'\\.', sep = '')
+  stri_extract_first_regex(title, w)
+})
+
+t = data.frame(tagTitle[[1]])
+t = lapply(1:length(tagTitle), function(x) data.frame(tagTitle[[x]]))
+
+TAGTitles = do.call(cbind, t)
+colnames(TAGTitles) = TAG
+TT = TAGTitles[rowSums(is.na(TAGTitles))!=78, ]
+names(TT)
+tt = TT[,colSums(is.na(TT))!=nrow(TT)]
+names(tt)
+
+#6. What are the names of the R functions referenced in the accepted answers and comments 
+  #of the posts? We can do better than we did in processing the title of the posts 
+  #as there is HTML markup and we can find content in code blocks.
+
+
+answer = bytype$answer
+accept_ans = answer[which(answer$score > 0),]
+comment = bytype$comment
+accept_com = comment[which(comment$score > 0), ]
+head(accept_com$text)
+
+#answer:
+tagAns = lapply(1:length(TAG), function(x) {
+  tag = TAG[x]
+  tag = gsub('^', ' ', tag)
+  tag = gsub('$', ' ', tag)
+  tag = stri_extract_first_regex(accept_ans$text, tag)
+  return(tag)
+})
+
+tagANS = lapply(1:length(tagAns), function(x) data.frame(tagAns[[x]]))
+tagANS = do.call(cbind, tagANS)
+colnames(tagANS) = TAG
+head(tagANS)
+
+TA = tagANS[rowSums(is.na(tagANS))!=78, ]
+nrow(TA)
+ta = TA[,colSums(is.na(TA))!=nrow(TA)]
+ncol(ta)
+names(ta)
+
+#comment:
+tagCom = lapply(1:length(TAG), function(x) {
+  tag = TAG[x]
+  tag = gsub('^', ' ', tag)
+  tag = gsub('$', ' ', tag)
+  tag = stri_extract_first_regex(accept_com$text, tag)
+  return(tag)
+})
+
+tagCOM = lapply(1:length(tagCom), function(x) data.frame(tagCom[[x]]))
+tagCOM = do.call(cbind, tagCOM)
+colnames(tagCOM) = TAG
+nrow(tagCOM)
+
+TC = tagCOM[rowSums(is.na(tagCOM)) != ncol(tagCOM), ]
+nrow(TC)
+tc = TC[,colSums(is.na(TC))!=nrow(TC)]
+ncol(tc)
+names(tc)
+
+#both:
+ac = Reduce(intersect, list(names(ta),names(tc),TAG))
+ac
